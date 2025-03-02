@@ -36,6 +36,12 @@ let package = Package(
 
         // DNS Support for mDNS
         .package(url: "https://github.com/Bouke/DNS.git", from: "1.0.0"),
+
+        // LibP2P MPLEX
+        .package(url: "https://github.com/swift-libp2p/swift-libp2p-mplex.git", .upToNextMajor(from: "0.0.1")),
+
+        // LibP2P PlaintextV2
+        .package(url: "https://github.com/swift-libp2p/swift-libp2p-plaintext.git", .upToNextMajor(from: "0.0.1")),
     ],
     targets: [
         // Targets are the basic building blocks of a package. A target can define a module or a test suite.
@@ -49,7 +55,11 @@ let package = Package(
         ),
         .testTarget(
             name: "LibP2PMDNSTests",
-            dependencies: ["LibP2PMDNS"]
+            dependencies: [
+                "LibP2PMDNS",
+                .product(name: "LibP2PMPLEX", package: "swift-libp2p-mplex"),
+                .product(name: "LibP2PPlaintext", package: "swift-libp2p-plaintext"),
+            ]
         ),
     ]
 )

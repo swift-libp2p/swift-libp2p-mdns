@@ -14,8 +14,6 @@
 
 import DNS
 import LibP2P
-import LibP2PMPLEX
-import LibP2PPlaintext
 import Multiaddr
 import NIO
 import Network
@@ -147,13 +145,13 @@ final class LibP2PMDNSTests: XCTestCase {
         let flags: DNSServiceFlags = DNSServiceFlags()
         DNSServiceRegister(&dnsService, flags, 0, "chat-room-name", "_p2p._udp", "", "", 3338, 0, "", nil, nil)
 
-        let exp = expectation(description: "10 second delay")
+        let exp = expectation(description: "3 second delay")
 
-        DispatchQueue.main.asyncAfter(deadline: .now() + .seconds(10)) {
+        DispatchQueue.main.asyncAfter(deadline: .now() + .seconds(3)) {
             exp.fulfill()
         }
 
-        waitForExpectations(timeout: 15, handler: nil)
+        waitForExpectations(timeout: 5, handler: nil)
 
         DNSServiceRefDeallocate(dnsService)
     }
