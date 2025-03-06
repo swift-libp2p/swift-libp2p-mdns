@@ -107,7 +107,21 @@ final class LibP2PMDNSTests: XCTestCase {
             }
         }
 
-        print(fixed)
+        // Our host machines ip address was changed to 127.0.0.1
+        XCTAssertEqual(
+            fixed[0].description,
+            "/ip4/127.0.0.1/tcp/1234/p2p/QmX99Bk1CoBc787KY36tcy43AbXoo1HiG1WTDpenmJecNV"
+        )
+        // 127.0.0.1 was left unchanged
+        XCTAssertEqual(
+            fixed[1].description,
+            "/ip4/127.0.0.1/tcp/1234/p2p/QmX99Bk1CoBc787KY36tcy43AbXoo1HiG1WTDpenmJecNV"
+        )
+        // Another local address (not our host machine) was left unchanged
+        XCTAssertEqual(
+            fixed[2].description,
+            "/ip4/192.168.1.23/tcp/1234/p2p/QmX99Bk1CoBc787KY36tcy43AbXoo1HiG1WTDpenmJecNV"
+        )
     }
 
     func testFixSameHostAddresses2() {
@@ -133,35 +147,22 @@ final class LibP2PMDNSTests: XCTestCase {
             }
         }
 
-        print(fixed)
+        // Our host machines ip address was changed to 127.0.0.1
+        XCTAssertEqual(
+            fixed[0].description,
+            "/ip4/127.0.0.1/tcp/1234/p2p/QmX99Bk1CoBc787KY36tcy43AbXoo1HiG1WTDpenmJecNV"
+        )
+        // 127.0.0.1 was left unchanged
+        XCTAssertEqual(
+            fixed[1].description,
+            "/ip4/127.0.0.1/tcp/1234/p2p/QmX99Bk1CoBc787KY36tcy43AbXoo1HiG1WTDpenmJecNV"
+        )
+        // Another local address (not our host machine) was left unchanged
+        XCTAssertEqual(
+            fixed[2].description,
+            "/ip4/192.168.1.23/tcp/1234/p2p/QmX99Bk1CoBc787KY36tcy43AbXoo1HiG1WTDpenmJecNV"
+        )
     }
-
-    /// This is an example of how we can register a service using the dnssd library / daemon
-    /// We register a `_http._tcp` service with the name "MyTest" on port 3338 for 10 seconds and then unregsiter the service by safely deallocating the `DNSServiceRef`
-    /// Eventually it would be nice to not have to rely on dnssd, and instead register services through SwiftNIO udp multicast directly, but I haven't figured out how to do that yet.
-    func testRegisterService() throws {
-        /// Attempt to register a custom service
-        var dnsService: DNSServiceRef? = nil
-        let flags: DNSServiceFlags = DNSServiceFlags()
-        DNSServiceRegister(&dnsService, flags, 0, "chat-room-name", "_p2p._udp", "", "", 3338, 0, "", nil, nil)
-
-        let exp = expectation(description: "3 second delay")
-
-        DispatchQueue.main.asyncAfter(deadline: .now() + .seconds(3)) {
-            exp.fulfill()
-        }
-
-        waitForExpectations(timeout: 5, handler: nil)
-
-        DNSServiceRefDeallocate(dnsService)
-    }
-
-    //    func test_dsnsd_lookup() throws {
-    //
-    //        var dnsService:DNSServiceRef? = nil
-    //        let flags:DNSServiceFlags = DNSServiceFlags()
-    //        DNSServiceResolve(&dnsService, flags, 6, "_afpovertcp._tcp", "", "JaybeesNAS.local", nil, nil)
-    //    }
 
     func testCreateTextRecord() throws {
         let txtRecord = DNS.TextRecord(
@@ -173,8 +174,10 @@ final class LibP2PMDNSTests: XCTestCase {
         var labels = Labels()
         try txtRecord.serialize(onto: &txtBytes, labels: &labels)
 
-        print(UInt16(txtBytes.count).bytes)
-        print(txtBytes.asString(base: .base16))
+        XCTAssertEqual(
+            txtBytes.asString(base: .base16),
+            "0e636861742d726f6f6d2d6e616d65000010000100000e10001909706f72743d333333380e746573743d736f6d657468696e67"
+        )
     }
 
     func testCreateTextRecord2() throws {
