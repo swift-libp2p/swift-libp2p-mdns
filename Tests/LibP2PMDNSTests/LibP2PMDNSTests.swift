@@ -44,13 +44,13 @@ final class LibP2PMDNSTests: XCTestCase {
     }
 
     func testSystemDevicesEN0() throws {
-        try System.enumerateDevices().filter({ device in
+        let devices = try System.enumerateDevices().filter({ device in
             guard device.name == "en0" && device.address != nil else { return false }
             guard let ma = try? device.address?.toMultiaddr().tcpAddress else { return false }
 
             return ma.ip4
-
-        }).forEach { device in
+        })
+        for device in devices {
             print("Description: \(device)")
             print("Interface Index: \(device.interfaceIndex)")
             print("Name: \(device.name)")
@@ -78,8 +78,8 @@ final class LibP2PMDNSTests: XCTestCase {
                 if addy.addr == hostIP4 {
                     do {
                         var new = try Multiaddr(.ip4, address: "127.0.0.1")
-                        try ma.addresses.dropFirst().forEach {
-                            new = try new.encapsulate(proto: $0.codec, address: $0.addr)
+                        for proto in ma.addresses.dropFirst() {
+                            new = try new.encapsulate(proto: proto.codec, address: proto.addr)
                         }
                         return new
                     } catch {
@@ -92,8 +92,8 @@ final class LibP2PMDNSTests: XCTestCase {
                 if addy.addr == hostIP6 {
                     do {
                         var new = try Multiaddr(.ip6, address: "::1")
-                        try ma.addresses.dropFirst().forEach {
-                            new = try new.encapsulate(proto: $0.codec, address: $0.addr)
+                        for proto in ma.addresses.dropFirst() {
+                            new = try new.encapsulate(proto: proto.codec, address: proto.addr)
                         }
                         return new
                     } catch {
