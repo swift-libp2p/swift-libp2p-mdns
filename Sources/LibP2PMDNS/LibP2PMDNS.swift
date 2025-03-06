@@ -332,14 +332,14 @@ public class MulticastPeerDiscovery: Discovery, PeerDiscovery, LifecycleHandler 
 
     /// Given a list of multiaddresses, group them into unqiue PeerInfo sets...
     private func multiaddressesToPeerInfos(_ mas: [Multiaddr]) -> [PeerInfo] {
-        let uniquePeers = Set(mas.compactMap { $0.getPeerID() })
+        let uniquePeers = Set(mas.compactMap { $0.getPeerIDString() })
         var pInfos: [PeerInfo] = []
         for peer in uniquePeers {
             guard let pid = try? PeerID(cid: peer) else { continue }
             pInfos.append(
                 PeerInfo(
                     peer: pid,
-                    addresses: mas.filter({ $0.getPeerID() == peer }).fixSameHostAddresses(
+                    addresses: mas.filter({ $0.getPeerIDString() == peer }).fixSameHostAddresses(
                         ip4: self.interfaceAddressV4.ipAddress!
                     )
                 )
