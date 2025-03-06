@@ -32,16 +32,16 @@ let package = Package(
         // Dependencies declare other packages that this package depends on.
 
         // LibP2P Core Modules
-        .package(url: "https://github.com/swift-libp2p/swift-libp2p.git", .upToNextMajor(from: "0.1.0")),
+        .package(url: "https://github.com/swift-libp2p/swift-libp2p.git", .upToNextMinor(from: "0.2.0")),
 
         // DNS Support for mDNS
-        .package(url: "https://github.com/Bouke/DNS.git", from: "1.0.0"),
+        .package(url: "https://github.com/Bouke/DNS.git", .upToNextMajor(from: "1.0.0")),
 
         // LibP2P MPLEX
-        .package(url: "https://github.com/swift-libp2p/swift-libp2p-mplex.git", .upToNextMajor(from: "0.0.1")),
+        .package(url: "https://github.com/swift-libp2p/swift-libp2p-mplex.git", .upToNextMinor(from: "0.1.0")),
 
         // LibP2P PlaintextV2
-        .package(url: "https://github.com/swift-libp2p/swift-libp2p-plaintext.git", .upToNextMajor(from: "0.0.1")),
+        .package(url: "https://github.com/swift-libp2p/swift-libp2p-plaintext.git", .upToNextMinor(from: "0.1.0")),
     ],
     targets: [
         // Targets are the basic building blocks of a package. A target can define a module or a test suite.

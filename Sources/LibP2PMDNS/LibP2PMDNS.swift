@@ -238,7 +238,7 @@ public class MulticastPeerDiscovery: Discovery, PeerDiscovery, LifecycleHandler 
                     }
 
                     let pInfos = self.multiaddressesToPeerInfos(multiaddresses)
-                    pInfos.forEach { remotePeer in
+                    for remotePeer in pInfos {
                         if self.discovered[remotePeer.peer.b58String] == nil {
                             self.logger.trace("Discovered Local Peer -> \(remotePeer)")
                             self.discovered[remotePeer.peer.b58String] = remotePeer
@@ -332,14 +332,14 @@ public class MulticastPeerDiscovery: Discovery, PeerDiscovery, LifecycleHandler 
 
     /// Given a list of multiaddresses, group them into unqiue PeerInfo sets...
     private func multiaddressesToPeerInfos(_ mas: [Multiaddr]) -> [PeerInfo] {
-        let uniquePeers = Set(mas.compactMap { $0.getPeerID() })
+        let uniquePeers = Set(mas.compactMap { $0.getPeerIDString() })
         var pInfos: [PeerInfo] = []
         for peer in uniquePeers {
             guard let pid = try? PeerID(cid: peer) else { continue }
             pInfos.append(
                 PeerInfo(
                     peer: pid,
-                    addresses: mas.filter({ $0.getPeerID() == peer }).fixSameHostAddresses(
+                    addresses: mas.filter({ $0.getPeerIDString() == peer }).fixSameHostAddresses(
                         ip4: self.interfaceAddressV4.ipAddress!
                     )
                 )
@@ -429,10 +429,11 @@ public class MulticastPeerDiscovery: Discovery, PeerDiscovery, LifecycleHandler 
         /// For each reply, extract out the ip address and return them...
         return self.newQueryResponse(question).map { msgs in
             var records: [SocketAddress] = []
-            msgs.forEach { msg in
-                msg.answers.compactMap {
+            for msg in msgs {
+                let hostRecords = msg.answers.compactMap {
                     $0 as? DNS.HostRecord<DNS.IPv4>
-                }.forEach { hostRecord in
+                }
+                for hostRecord in hostRecords {
                     records.append(try! SocketAddress(ipAddress: hostRecord.ip.presentation, port: 0))
                 }
             }
@@ -589,7 +590,7 @@ public class MulticastPeerDiscovery: Discovery, PeerDiscovery, LifecycleHandler 
             var buffer = Data()
             TXTRecordCreate(&txtRecord, 1, &buffer)
             /// For each listening address, append the protocol (key) and port (value) to the txt record
-            self.listeningAddresses.forEach { ma in
+            for ma in self.listeningAddresses {
                 if let tcp = ma.tcpAddress {
                     self.logger.trace("Adding tcp/\(tcp.port) to text record")
                     //TXTRecordSetValue(&txtRecord, "tcp", UInt8(tcp.port.bytes.count), &tcp.port)
@@ -657,10 +658,11 @@ public class MulticastPeerDiscovery: Discovery, PeerDiscovery, LifecycleHandler 
         /// For each reply, extract out the ip address and return them...
         return self.newQueryResponse(question).map { msgs in
             var records: [SocketAddress] = []
-            msgs.forEach { msg in
-                msg.answers.compactMap {
+            for msg in msgs {
+                let hostRecords = msg.answers.compactMap {
                     $0 as? DNS.HostRecord<DNS.IPv4>
-                }.forEach { hostRecord in
+                }
+                for hostRecord in hostRecords {
                     records.append(try! SocketAddress(ipAddress: hostRecord.ip.presentation, port: 0))
                 }
             }
@@ -671,14 +673,15 @@ public class MulticastPeerDiscovery: Discovery, PeerDiscovery, LifecycleHandler 
     private func onMDNSMessage(_ msg: DNS.Message) {
         //self.logger.trace("Inbound mDNS Message: \(msg)")
         let _ = self.eventLoop.submit {
-            self.outstandingQueries.filter { query in
+            let queryCallbacks = self.outstandingQueries.filter { query in
                 guard var q = msg.questions.first else { return false }
                 //self.logger.trace("Comparing \(query.query.type) == \(q.type) && \(query.query.name) == \(q.name)")
                 if q.name.last == "." { q.name = String(q.name.dropLast()) }
                 return query.query.type == q.type && query.query.name == q.name
-            }.forEach { queryCallbacks in
+            }
+            for queryCallback in queryCallbacks {
                 //self.logger.trace("Found our handler, passing the message along")
-                queryCallbacks.callback(msg)
+                queryCallback.callback(msg)
             }
             return
         }
