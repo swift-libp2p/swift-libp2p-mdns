@@ -18,11 +18,12 @@ import Multiaddr
 import NIO
 import Network
 import PeerID
-import XCTest
+import Testing
 
 @testable import LibP2PMDNS
 
-final class LibP2PMDNSTests: XCTestCase {
+@Suite("Libp2p mDNS Tests")
+struct LibP2PMDNSTests {
     // Try and get our machines internal IP Address
     let internalIPAddress = try! System.enumerateDevices().first(where: { device in
         guard device.name == "en0" && device.address != nil else { return false }
@@ -32,7 +33,7 @@ final class LibP2PMDNSTests: XCTestCase {
     }).map { try! $0.address!.toMultiaddr().tcpAddress!.address }!
 
     /// System.enumerateDevices
-    func testSystemDevices() throws {
+    @Test func testSystemDevices() throws {
         for device in try! System.enumerateDevices() {
             print("Description: \(device)")
             print("Interface Index: \(device.interfaceIndex)")
@@ -43,7 +44,7 @@ final class LibP2PMDNSTests: XCTestCase {
         }
     }
 
-    func testSystemDevicesEN0() throws {
+    @Test func testSystemDevicesEN0() throws {
         let devices = try System.enumerateDevices().filter({ device in
             guard device.name == "en0" && device.address != nil else { return false }
             guard let ma = try? device.address?.toMultiaddr().tcpAddress else { return false }
@@ -60,7 +61,7 @@ final class LibP2PMDNSTests: XCTestCase {
         }
     }
 
-    func testFixSameHostAddresses() {
+    @Test func testFixSameHostAddresses() {
         let hostIP4 = "192.168.1.21"
         let hostIP6 = "f4:d4:88:5c:bf:7b"
         let mas = [
@@ -108,23 +109,20 @@ final class LibP2PMDNSTests: XCTestCase {
         }
 
         // Our host machines ip address was changed to 127.0.0.1
-        XCTAssertEqual(
-            fixed[0].description,
-            "/ip4/127.0.0.1/tcp/1234/p2p/QmX99Bk1CoBc787KY36tcy43AbXoo1HiG1WTDpenmJecNV"
+        #expect(
+            fixed[0].description == "/ip4/127.0.0.1/tcp/1234/p2p/QmX99Bk1CoBc787KY36tcy43AbXoo1HiG1WTDpenmJecNV"
         )
         // 127.0.0.1 was left unchanged
-        XCTAssertEqual(
-            fixed[1].description,
-            "/ip4/127.0.0.1/tcp/1234/p2p/QmX99Bk1CoBc787KY36tcy43AbXoo1HiG1WTDpenmJecNV"
+        #expect(
+            fixed[1].description == "/ip4/127.0.0.1/tcp/1234/p2p/QmX99Bk1CoBc787KY36tcy43AbXoo1HiG1WTDpenmJecNV"
         )
         // Another local address (not our host machine) was left unchanged
-        XCTAssertEqual(
-            fixed[2].description,
-            "/ip4/192.168.1.23/tcp/1234/p2p/QmX99Bk1CoBc787KY36tcy43AbXoo1HiG1WTDpenmJecNV"
+        #expect(
+            fixed[2].description == "/ip4/192.168.1.23/tcp/1234/p2p/QmX99Bk1CoBc787KY36tcy43AbXoo1HiG1WTDpenmJecNV"
         )
     }
 
-    func testFixSameHostAddresses2() {
+    @Test func testFixSameHostAddresses2() {
         let hostIP4 = "192.168.1.21"
         let hostIP6 = "f4:d4:88:5c:bf:7b"
         let mas = [
@@ -148,23 +146,20 @@ final class LibP2PMDNSTests: XCTestCase {
         }
 
         // Our host machines ip address was changed to 127.0.0.1
-        XCTAssertEqual(
-            fixed[0].description,
-            "/ip4/127.0.0.1/tcp/1234/p2p/QmX99Bk1CoBc787KY36tcy43AbXoo1HiG1WTDpenmJecNV"
+        #expect(
+            fixed[0].description == "/ip4/127.0.0.1/tcp/1234/p2p/QmX99Bk1CoBc787KY36tcy43AbXoo1HiG1WTDpenmJecNV"
         )
         // 127.0.0.1 was left unchanged
-        XCTAssertEqual(
-            fixed[1].description,
-            "/ip4/127.0.0.1/tcp/1234/p2p/QmX99Bk1CoBc787KY36tcy43AbXoo1HiG1WTDpenmJecNV"
+        #expect(
+            fixed[1].description == "/ip4/127.0.0.1/tcp/1234/p2p/QmX99Bk1CoBc787KY36tcy43AbXoo1HiG1WTDpenmJecNV"
         )
         // Another local address (not our host machine) was left unchanged
-        XCTAssertEqual(
-            fixed[2].description,
-            "/ip4/192.168.1.23/tcp/1234/p2p/QmX99Bk1CoBc787KY36tcy43AbXoo1HiG1WTDpenmJecNV"
+        #expect(
+            fixed[2].description == "/ip4/192.168.1.23/tcp/1234/p2p/QmX99Bk1CoBc787KY36tcy43AbXoo1HiG1WTDpenmJecNV"
         )
     }
 
-    func testCreateTextRecord() throws {
+    @Test func testCreateTextRecord() throws {
         let txtRecord = DNS.TextRecord(
             name: "chat-room-name",
             ttl: 3600,
@@ -179,18 +174,17 @@ final class LibP2PMDNSTests: XCTestCase {
         //    txtBytes.asString(base: .base16),
         //    "0e636861742d726f6f6d2d6e616d65000010000100000e10001909706f72743d333333380e746573743d736f6d657468696e67"
         //)
-        XCTAssertEqual(txtBytes.count, 51)
+        #expect(txtBytes.count == 51)
     }
 
-    func testCreateTextRecord2() throws {
+    @Test func testCreateTextRecord2() throws {
         var txtRecord = TXTRecordRef()
         var buffer = Data()
         TXTRecordCreate(&txtRecord, 1, &buffer)
         var value = "1234"
         TXTRecordSetValue(&txtRecord, "test", UInt8(value.bytes.count), &value)
 
-        print(txtRecord)
-        print(TXTRecordGetLength(&txtRecord))
+        #expect(TXTRecordGetLength(&txtRecord) == 10)
 
         TXTRecordDeallocate(&txtRecord)
     }
