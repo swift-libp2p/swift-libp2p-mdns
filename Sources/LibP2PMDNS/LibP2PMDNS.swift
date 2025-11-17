@@ -12,41 +12,98 @@
 //
 //===----------------------------------------------------------------------===//
 
-import DNS
+@preconcurrency import DNS
 import LibP2P
+import NIOConcurrencyHelpers
 import dnssd
 
-public class MulticastPeerDiscovery: Discovery, PeerDiscovery, LifecycleHandler {
-    public static var key: String = "MulticastDNS"
-    public var onPeerDiscovered: ((PeerInfo) -> Void)?
-    public var on: ((PeerDiscoveryEvent) -> Void)?
+final public class MulticastPeerDiscovery: Discovery, PeerDiscovery, LifecycleHandler, @unchecked Sendable {
+    public static let key: String = "MulticastDNS"
+    public typealias PeerDiscoveredEvent = (@Sendable (PeerInfo) -> Void)
 
-    public private(set) var listeningAddresses: [Multiaddr] = []
-    public private(set) var state: ServiceLifecycleState = .stopped
+    public var onPeerDiscovered: PeerDiscoveredEvent? {
+        get { _onPeerDiscovered.withLockedValue { $0 } }
+        set { _onPeerDiscovered.withLockedValue { $0 = newValue } }
+    }
+    private let _onPeerDiscovered: NIOLockedValueBox<PeerDiscoveredEvent?>
+
+    public var on: (@Sendable (PeerDiscoveryEvent) -> Void)? {
+        get { _on.withLockedValue { $0 } }
+        set { _on.withLockedValue { $0 = newValue } }
+    }
+    public let _on: NIOLockedValueBox<(@Sendable (PeerDiscoveryEvent) -> Void)?>
+
+    public var listeningAddresses: [Multiaddr] {
+        get { _listeningAddresses.withLockedValue { $0 } }
+    }
+    private let _listeningAddresses: NIOLockedValueBox<[Multiaddr]> = .init([])
+
+    public var state: ServiceLifecycleState {
+        get { _state.withLockedValue { $0 } }
+    }
+    private let _state: NIOLockedValueBox<ServiceLifecycleState>
 
     public let eventLoop: EventLoop
 
-    private weak var application: Application!
-    private var logger: Logger
+    private let application: Application
+    private let logger: Logger
     //private let interfaceAddress:String
     private let interfaceAddressV4: SocketAddress
     private let interfaceAddressV6: SocketAddress
-    private var _state: ServiceLifecycleState
-    private var discovered: [String: PeerInfo]
+
+    // In Memory Discovery Cache
+    private var discovered: [String: PeerInfo] {
+        get { _discovered.withLockedValue { $0 } }
+        set { _discovered.withLockedValue { $0 = newValue } }
+    }
+    private let _discovered: NIOLockedValueBox<[String: PeerInfo]>
 
     private let peerID: PeerID
-    private var group: EventLoopGroup? = nil
-    private var targetDevice: NIONetworkDevice? = nil
+
+    private var group: EventLoopGroup? {
+        get { _group.withLockedValue { $0 } }
+        set { _group.withLockedValue { $0 = newValue } }
+    }
+    private let _group: NIOLockedValueBox<EventLoopGroup?> = .init(nil)
+
+    private var targetDevice: NIONetworkDevice? {
+        get { _targetDevice.withLockedValue { $0 } }
+        set { _targetDevice.withLockedValue { $0 = newValue } }
+    }
+    private let _targetDevice: NIOLockedValueBox<NIONetworkDevice?> = .init(nil)
+
     private let multicastGroup: SocketAddress
-    private var datagramBootstrap: DatagramBootstrap!
-    private var mdnsHost: Channel!
-    private var registeredServices: [String: DNSServiceRef] = [:]
 
-    private var outstandingQueries: [OutstandingQuery] = []
+    private var datagramBootstrap: DatagramBootstrap {
+        get { _datagramBootstrap.withLockedValue { $0! } }
+        set { _datagramBootstrap.withLockedValue { $0 = newValue } }
+    }
+    private let _datagramBootstrap: NIOLockedValueBox<DatagramBootstrap?>
 
-    private var serviceDiscoveryTask: RepeatedTask? = nil
+    private var mdnsHost: Channel? {
+        get { _mdnsHost.withLockedValue { $0 } }
+        set { _mdnsHost.withLockedValue { $0 = newValue } }
+    }
+    private let _mdnsHost: NIOLockedValueBox<Channel?>
 
-    private typealias OutstandingQuery = (query: Question, callback: (DNS.Message) -> Void)
+    private var registeredServices: [String: DNSServiceRef] {
+        get { _registeredServices.withLockedValue { $0 } }
+        set { _registeredServices.withLockedValue { $0 = newValue } }
+    }
+    private let _registeredServices: NIOLockedValueBox<[String: DNSServiceRef]> = .init([:])
+
+    private typealias OutstandingQuery = (query: Question, callback: @Sendable (DNS.Message) -> Void)
+    private var outstandingQueries: [OutstandingQuery] {
+        get { _outstandingQueries.withLockedValue { $0 } }
+        set { _outstandingQueries.withLockedValue { $0 = newValue } }
+    }
+    private let _outstandingQueries: NIOLockedValueBox<[OutstandingQuery]> = .init([])
+
+    private var serviceDiscoveryTask: RepeatedTask? {
+        get { _serviceDiscoveryTask.withLockedValue { $0 } }
+        set { _serviceDiscoveryTask.withLockedValue { $0 = newValue } }
+    }
+    private let _serviceDiscoveryTask: NIOLockedValueBox<RepeatedTask?> = .init(nil)
 
     init(
         app: Application,
@@ -56,8 +113,12 @@ public class MulticastPeerDiscovery: Discovery, PeerDiscovery, LifecycleHandler 
         //init(on loop:EventLoop, peerID:PeerID, interfaceAddress:String, multicastGroup:String = "224.0.0.251:5353") {
 
         self.application = app
-        self.logger = app.logger
         self.peerID = app.peerID
+
+        /// Configure our logger with some metadata
+        var logger = app.logger
+        logger[metadataKey: "mDNS"] = .string("\(peerID.shortDescription)")
+        self.logger = logger
 
         if let ia = interfaceAddress {
             if ia.protocol == .inet {
@@ -81,16 +142,18 @@ public class MulticastPeerDiscovery: Discovery, PeerDiscovery, LifecycleHandler 
             self.interfaceAddressV6 = try! MulticastPeerDiscovery.defaultInterfaceAddress(codec: .ip6)!
         }
         self.eventLoop = app.eventLoopGroup.next()
-        self._state = .stopped
-        self.discovered = [:]
+        self._state = .init(.stopped)
+        self._discovered = .init([:])
+        self._onPeerDiscovered = .init(nil)
+        self._on = .init(nil)
+        self._datagramBootstrap = .init(nil)
+        self._mdnsHost = .init(nil)
 
         ///self.multicastGroup = try! SocketAddress(ipAddress: "224.1.0.26", port: 7654)
         //let parts = multicastGroup.split(separator: ":")
         //self.multicastGroup = try! SocketAddress(ipAddress: String(parts[0]), port: Int(parts[1])!)
         self.multicastGroup = multicastGroup
 
-        /// Configure our logger with some metadata
-        self.logger[metadataKey: "mDNS"] = .string("\(peerID.shortDescription)")
         self.logger.trace("Initialized")
         self.logger.notice("mDNS ipV4: \(interfaceAddressV4)")
         self.logger.notice("mDNS ipV6: \(interfaceAddressV6)")
@@ -113,7 +176,7 @@ public class MulticastPeerDiscovery: Discovery, PeerDiscovery, LifecycleHandler 
         deviceName: String = "en0"
     ) throws -> SocketAddress? {
         guard codec == .ip4 || codec == .ip6 else { return nil }
-        return try System.enumerateDevices().compactMap({ device in
+        return try System.enumerateDevices().compactMap({ device -> SocketAddress? in
             guard device.name == deviceName && device.address != nil else { return nil }
             guard let ma = try? device.address?.toMultiaddr() else { return nil }
 
@@ -138,7 +201,7 @@ public class MulticastPeerDiscovery: Discovery, PeerDiscovery, LifecycleHandler 
         onDevice targetDevice: NIONetworkDevice
     ) throws -> SocketAddress? {
         guard codec == .ip4 || codec == .ip6 else { return nil }
-        return try System.enumerateDevices().compactMap({ device in
+        return try System.enumerateDevices().compactMap({ device -> SocketAddress? in
             guard device == targetDevice && device.address != nil else { return nil }
             guard let ma = try? device.address?.toMultiaddr() else { return nil }
 
@@ -163,13 +226,13 @@ public class MulticastPeerDiscovery: Discovery, PeerDiscovery, LifecycleHandler 
     }
 
     public func start() throws {
-        switch self._state {
+        switch self.state {
         case .stopped:
             /// Switch our state to .starting
-            self._state = .starting
+            self._state.withLockedValue { $0 = .starting }
 
             /// Update our logging state
-            self.logger.logLevel = application.logger.logLevel
+            //self.logger.logLevel = application.logger.logLevel
 
             /// Create an event loop group for our UDP server to use
             self.group = MultiThreadedEventLoopGroup(numberOfThreads: 1)
@@ -182,7 +245,7 @@ public class MulticastPeerDiscovery: Discovery, PeerDiscovery, LifecycleHandler 
             )
 
             /// Bootstrap the listening addresses from the application
-            self.listeningAddresses = self.application.listenAddresses
+            self._listeningAddresses.withLockedValue { $0 = self.application.listenAddresses }
 
             /// Register for listen events (this is when new hosts / servers get spun up on a particular port)
             /// Take this opportunity to add the address to our list of listeningAddresses (which gets included in our service registration)
@@ -195,7 +258,7 @@ public class MulticastPeerDiscovery: Discovery, PeerDiscovery, LifecycleHandler 
                         if !self.listeningAddresses.contains(where: { $0 == newAddress }) {
                             self.logger.debug("Notified of new listening address -> \(newAddress)")
                             self.logger.debug("Updating mDNS Service Registration")
-                            self.listeningAddresses.append(newAddress)
+                            self._listeningAddresses.withLockedValue { $0.append(newAddress) }
                         }
                         /// Do we need to re-register our service to account for the change in addresses...
                     }
@@ -213,7 +276,7 @@ public class MulticastPeerDiscovery: Discovery, PeerDiscovery, LifecycleHandler 
                         if self.listeningAddresses.contains(where: { $0 == oldAddress }) {
                             self.logger.debug("Notified of removed listening address -> \(oldAddress)")
                             self.logger.debug("Updating mDNS Service Registration")
-                            self.listeningAddresses.removeAll(where: { $0 == oldAddress })
+                            self._listeningAddresses.withLockedValue { $0.removeAll(where: { $0 == oldAddress }) }
                         }
                         /// Do we need to re-register our service to account for the change in addresses...
                     }
@@ -272,7 +335,7 @@ public class MulticastPeerDiscovery: Discovery, PeerDiscovery, LifecycleHandler 
             }
 
             /// Switch our state to started
-            self._state = .started
+            self._state.withLockedValue { $0 = .started }
             self.logger.trace("The mDNS service has started!")
 
         case .starting:
@@ -289,7 +352,7 @@ public class MulticastPeerDiscovery: Discovery, PeerDiscovery, LifecycleHandler 
     }
 
     public func stop() throws {
-        switch self._state {
+        switch self.state {
         case .stopped:
             self.logger.trace("The mDNS service is already stopped!")
 
@@ -297,7 +360,7 @@ public class MulticastPeerDiscovery: Discovery, PeerDiscovery, LifecycleHandler 
             self.logger.warning("The mDNS service is attempting to stop, please wait for it to finish")
 
         case .starting, .started:
-            self._state = .stopping
+            self._state.withLockedValue { $0 = .stopping }
 
             /// Cancel the service discovery task
             self.serviceDiscoveryTask?.cancel()
@@ -309,14 +372,10 @@ public class MulticastPeerDiscovery: Discovery, PeerDiscovery, LifecycleHandler 
             }
 
             /// Tear down the Multicast UDP Channel
-            if self.mdnsHost != nil {
-                try self.mdnsHost!.close().wait()
-            }
+            try self.mdnsHost?.close().wait()
 
             /// Tear down the Event Loop Group
-            if self.group != nil {
-                try self.group!.syncShutdownGracefully()
-            }
+            try self.group?.syncShutdownGracefully()
 
             /// Unregister ourself from our EventBus
             self.application.events.unregister(self)
@@ -326,7 +385,7 @@ public class MulticastPeerDiscovery: Discovery, PeerDiscovery, LifecycleHandler 
             self.group = nil
 
             self.logger.trace("The mDNS Service has been shutdown")
-            self._state = .stopped
+            self._state.withLockedValue { $0 = .stopped }
         }
     }
 
@@ -370,12 +429,11 @@ public class MulticastPeerDiscovery: Discovery, PeerDiscovery, LifecycleHandler 
             }
         }
 
-        if targetDevice == nil {
+        guard let targetDevice else {
             fatalError("Could not find device for \(interfaceAddress)")
-        } else {
-            self.logger.debug("Using device: \(targetDevice!)")
         }
-        //}
+
+        self.logger.debug("Using device: \(targetDevice)")
 
         // Begin by setting up the basics of the bootstrap.
         let datagramBootstrap = DatagramBootstrap(group: group)
@@ -395,10 +453,6 @@ public class MulticastPeerDiscovery: Discovery, PeerDiscovery, LifecycleHandler 
                 let channel = channel as! MulticastChannel
                 return channel.joinGroup(onMulticastGroup, device: targetDevice).map { channel }
             }.flatMap { channel -> EventLoopFuture<Channel> in
-                guard let targetDevice = targetDevice else {
-                    return channel.eventLoop.makeSucceededFuture(channel)
-                }
-
                 let provider = channel as! SocketOptionProvider
 
                 switch targetDevice.address {
@@ -422,7 +476,7 @@ public class MulticastPeerDiscovery: Discovery, PeerDiscovery, LifecycleHandler 
 
     /// This method will query the mdns multicast group at 244.0.0.251:5353 for any machines that implement the specified service.
     public func queryForService(_ service: String) -> EventLoopFuture<[SocketAddress]> {
-        guard self._state == .started else { return self.eventLoop.makeFailedFuture(Errors.mdnsServiceNotStarted) }
+        guard self.state == .started else { return self.eventLoop.makeFailedFuture(Errors.mdnsServiceNotStarted) }
         /// Create the query
         let question = Question(name: "\(service).local", type: .pointer)
 
@@ -534,7 +588,7 @@ public class MulticastPeerDiscovery: Discovery, PeerDiscovery, LifecycleHandler 
         protocol proto: String = "udp",
         serviceName: String = "p2p"
     ) -> EventLoopFuture<Bool> {  //"instance-name"._name._protocol -> chat-room-name._p2p._udp
-        guard self._state == .started else { return self.eventLoop.makeFailedFuture(Errors.mdnsServiceNotStarted) }
+        guard self.state == .started else { return self.eventLoop.makeFailedFuture(Errors.mdnsServiceNotStarted) }
 
         return self.eventLoop.submit {
             guard proto == "udp" || proto == "tcp" else {
@@ -565,7 +619,7 @@ public class MulticastPeerDiscovery: Discovery, PeerDiscovery, LifecycleHandler 
             )
 
             /// if dnsService is still nil at this point, the service registration failed, so lets return false
-            guard dnsService != nil else { return false }
+            guard let dnsService else { return false }
 
             /// store the service reference in our registered services for deallocation / unregistring later
             self.registeredServices[name] = dnsService
@@ -597,12 +651,12 @@ public class MulticastPeerDiscovery: Discovery, PeerDiscovery, LifecycleHandler 
                     var port: String = "\(tcp.port)"
                     TXTRecordSetValue(&txtRecord, "tcp", UInt8(port.bytes.count), &port)
                 }
-                //                else if let udp = ma.udpAddress {
-                //                    self.logger.trace("Adding udp/\(udp.port) to text record")
-                //                    //TXTRecordSetValue(&txtRecord, "udp", UInt8(udp.port.bytes.count), &udp.port)
-                //                    var port:String = "\(udp.port)"
-                //                    TXTRecordSetValue(&txtRecord, "udp", UInt8(port.bytes.count), &port)
-                //                }
+                //else if let udp = ma.udpAddress {
+                //    self.logger.trace("Adding udp/\(udp.port) to text record")
+                //    //TXTRecordSetValue(&txtRecord, "udp", UInt8(udp.port.bytes.count), &udp.port)
+                //    var port:String = "\(udp.port)"
+                //    TXTRecordSetValue(&txtRecord, "udp", UInt8(port.bytes.count), &port)
+                //}
             }
             /// Register the service...
             DNSServiceRegister(
@@ -621,7 +675,7 @@ public class MulticastPeerDiscovery: Discovery, PeerDiscovery, LifecycleHandler 
             )
 
             /// if dnsService is still nil at this point, the service registration failed, so lets return false
-            guard dnsService != nil else { return false }
+            guard let dnsService else { return false }
 
             /// store the service reference in our registered services for deallocation / unregistring later
             self.registeredServices[self.peerID.b58String] = dnsService
@@ -634,7 +688,7 @@ public class MulticastPeerDiscovery: Discovery, PeerDiscovery, LifecycleHandler 
 
     /// Unregisters a previously registered service
     public func unregisterService(name: String) -> EventLoopFuture<Bool> {
-        guard self._state == .started else { return self.eventLoop.makeFailedFuture(Errors.mdnsServiceNotStarted) }
+        guard self.state == .started else { return self.eventLoop.makeFailedFuture(Errors.mdnsServiceNotStarted) }
 
         return self.eventLoop.submit {
             if let service = self.registeredServices[name] {
@@ -651,7 +705,7 @@ public class MulticastPeerDiscovery: Discovery, PeerDiscovery, LifecycleHandler 
 
     /// Given a hostname, we'll attempt to resolve it into an ipv4 or and ipv6 address on your LAN
     public func resolveHostname(_ hostname: String) -> EventLoopFuture<SocketAddress?> {
-        guard self._state == .started else { return self.eventLoop.makeFailedFuture(Errors.mdnsServiceNotStarted) }
+        guard self.state == .started else { return self.eventLoop.makeFailedFuture(Errors.mdnsServiceNotStarted) }
         /// Create the query
         let question = Question(name: "\(hostname).local", type: .host)
 
@@ -697,18 +751,18 @@ public class MulticastPeerDiscovery: Discovery, PeerDiscovery, LifecycleHandler 
         let queryPromise = self.eventLoop.makePromise(of: Array<DNS.Message>.self)
 
         /// An array to store our answers...
-        var answers: [DNS.Message] = []
+        let answers: NIOLockedValueBox<[DNS.Message]> = .init([])
 
         /// Debouncer Task...
-        var debounce: Scheduled<Void>? = nil
+        let debounce: NIOLockedValueBox<Scheduled<Void>?> = .init(nil)
 
         /// Create the timeout...
         let timeout = self.eventLoop.scheduleTask(in: .seconds(3)) { () -> Void in
-            if answers.isEmpty {
+            if answers.withLockedValue({ $0 }).isEmpty {
                 return queryPromise.fail(Errors.timedOut)
             } else {
-                debounce?.cancel()
-                return queryPromise.succeed(answers)
+                debounce.withLockedValue({ $0 })?.cancel()
+                return queryPromise.succeed(answers.withLockedValue({ $0 }))
             }
         }
 
@@ -725,15 +779,17 @@ public class MulticastPeerDiscovery: Discovery, PeerDiscovery, LifecycleHandler 
                 //self.logger.trace("Got a response from our query, waiting another 200ms for additional responses before succeeding our promise...")
 
                 /// Append the messages onto our answer stack
-                answers.append(msg)
+                answers.withLockedValue { $0.append(msg) }
 
                 /// Cancel the current debounce, and add another 200ms onto our wait for additional answers...
-                debounce?.cancel()
-                debounce = self.eventLoop.scheduleTask(in: .milliseconds(200)) {
-                    /// Cancel our timeout
-                    timeout.cancel()
-                    /// Succeed with whatever messages we have so far...
-                    queryPromise.succeed(answers)
+                debounce.withLockedValue { d in
+                    d?.cancel()
+                    d = self.eventLoop.scheduleTask(in: .milliseconds(200)) {
+                        /// Cancel our timeout
+                        timeout.cancel()
+                        /// Succeed with whatever messages we have so far...
+                        queryPromise.succeed(answers.withLockedValue({ $0 }))
+                    }
                 }
             }
         )
@@ -741,7 +797,7 @@ public class MulticastPeerDiscovery: Discovery, PeerDiscovery, LifecycleHandler 
 
         /// Issue the query...
         //self.logger.trace("Issueing mDNS Query")
-        self.mdnsHost.writeAndFlush(
+        self.mdnsHost?.writeAndFlush(
             AddressedEnvelope(remoteAddress: multicastGroup, data: try! msg.serialize()),
             promise: nil
         )
@@ -750,12 +806,12 @@ public class MulticastPeerDiscovery: Discovery, PeerDiscovery, LifecycleHandler 
         return queryPromise.futureResult
     }
 
-    private final class MDNSMessageDecoder: ChannelInboundHandler {
+    private final class MDNSMessageDecoder: ChannelInboundHandler, Sendable {
         public typealias InboundIn = AddressedEnvelope<ByteBuffer>
 
-        private let handler: ((DNS.Message) -> Void)
+        private let handler: (@Sendable (DNS.Message) -> Void)
 
-        init(messageHandler: @escaping (DNS.Message) -> Void) {
+        init(messageHandler: @escaping @Sendable (DNS.Message) -> Void) {
             self.handler = messageHandler
         }
 
@@ -773,7 +829,7 @@ public class MulticastPeerDiscovery: Discovery, PeerDiscovery, LifecycleHandler 
         }
     }
 
-    private final class MDNSMessageEncoder: ChannelOutboundHandler {
+    private final class MDNSMessageEncoder: ChannelOutboundHandler, Sendable {
         public typealias OutboundIn = AddressedEnvelope<Data>
         public typealias OutboundOut = AddressedEnvelope<ByteBuffer>
 
